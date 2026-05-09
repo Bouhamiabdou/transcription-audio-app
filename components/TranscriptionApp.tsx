@@ -63,6 +63,13 @@ export default function TranscriptionApp() {
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const idCounterRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const languageRef = useRef(language);
+  const restartRef = useRef(false);
+
+  // Keep language ref in sync so startListening never has a stale value
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
 
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -89,12 +96,17 @@ export default function TranscriptionApp() {
     const recognition = new SR();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = language.code;
+    recognition.lang = languageRef.current.code;
 
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => {
       setIsListening(false);
       setInterim("");
+      // Auto-restart with new language after a language change
+      if (restartRef.current) {
+        restartRef.current = false;
+        setTimeout(() => startListening(), 50);
+      }
     };
 
     recognition.onerror = (e) => {
@@ -129,7 +141,7 @@ export default function TranscriptionApp() {
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [language]);
+  }, []);
 
   const stopListening = useCallback(() => {
     recognitionRef.current?.stop();
@@ -207,10 +219,12 @@ export default function TranscriptionApp() {
                     <button
                       key={lang.code}
                       onClick={() => {
+                        languageRef.current = lang;
                         setLanguage(lang);
                         setShowLangPicker(false);
                         if (isListening) {
-                          stopListening();
+                          restartRef.current = true;
+                          recognitionRef.current?.stop();
                         }
                       }}
                       className={`w-full flex items-center gap-2 px-4 py-2.5 text-sm text-left hover:bg-slate-700 transition-colors ${lang.code === language.code ? "text-blue-400 font-medium" : ""}`}
