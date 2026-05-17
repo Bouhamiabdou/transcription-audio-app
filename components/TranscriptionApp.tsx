@@ -299,6 +299,53 @@ export default function TranscriptionApp() {
     return (await res.text()).trim();
   };
 
+  // ── Audio helpers ──────────────────────────────────────────────────────────
+
+  const writeStr = (view: DataView, offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+
+  const audioBufferToWavBlob = (buffer: AudioBuffer): Blob => {
+    const numSamples = buffer.length;
+    const sampleRate = buffer.sampleRate;
+    const bps = 16;
+    const dataBytes = numSamples * bps / 8;
+    const ab = new ArrayBuffer(44 + dataBytes);
+    const view = new DataView(ab);
+    writeStr(view, 0, "RIFF");
+    view.setUint32(4, 36 + dataBytes, true);
+    writeStr(view, 8, "WAVE");
+    writeStr(view, 12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);   // PCM
+    view.setUint16(22, 1, true);   // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * bps / 8, true);
+    view.setUint16(32, bps / 8, true);
+    view.setUint16(34, bps, true);
+    writeStr(view, 36, "data");
+    view.setUint32(40, dataBytes, true);
+    const pcm = buffer.getChannelData(0);
+    let off = 44;
+    for (let i = 0; i < numSamples; i++) {
+      const s = Math.max(-1, Math.min(1, pcm[i]));
+      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      off += 2;
+    }
+    return new Blob([ab], { type: "audio/wav" });
+  };
+
+  const resampleToMono16k = async (buffer: AudioBuffer): Promise<AudioBuffer> => {
+    const targetRate = 16000;
+    const numSamples = Math.ceil(buffer.duration * targetRate);
+    const offCtx = new OfflineAudioContext(1, numSamples, targetRate);
+    const src = offCtx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(offCtx.destination);
+    src.start(0);
+    return offCtx.startRendering();
+  };
+
   const startFileTranscription = async () => {
     if (!selectedFile) return;
     if (!groqApiKey.trim()) {
@@ -312,21 +359,42 @@ export default function TranscriptionApp() {
     setFileProgress(0);
 
     try {
-      // Save key for session
       try { sessionStorage.setItem("groq_key", groqApiKey.trim()); } catch {}
 
-      const fileSize = selectedFile.size;
-      const totalChunks = Math.ceil(fileSize / CHUNK_SIZE_BYTES);
+      // ── 1. Decode audio ──────────────────────────────────────────────────
+      setFileProgressText("Décodage audio en cours…");
+      const arrayBuffer = await selectedFile.arrayBuffer();
+      const audioCtx = new AudioContext();
+      let decoded: AudioBuffer;
+      try {
+        decoded = await audioCtx.decodeAudioData(arrayBuffer);
+      } finally {
+        audioCtx.close();
+      }
+
+      // ── 2. Resample to mono 16 kHz (keeps each chunk well under 25 MB) ──
+      setFileProgressText("Rééchantillonnage mono 16 kHz…");
+      const mono = await resampleToMono16k(decoded);
+
+      // ── 3. Split into 10-min WAV chunks & transcribe ──────────────────
+      const CHUNK_SEC = 600; // 10 minutes → ~19.2 MB WAV per chunk
+      const samplesPerChunk = CHUNK_SEC * mono.sampleRate;
+      const totalChunks = Math.ceil(mono.length / samplesPerChunk);
       const texts: string[] = [];
 
       setFileProgressText(`Préparation de ${totalChunks} chunk(s)…`);
 
       for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE_BYTES;
-        const end = Math.min(start + CHUNK_SIZE_BYTES, fileSize);
-        const chunk = selectedFile.slice(start, end);
+        const startSample = i * samplesPerChunk;
+        const chunkLen = Math.min(samplesPerChunk, mono.length - startSample);
 
-        const text = await transcribeChunk(chunk, i, totalChunks, selectedFile.name);
+        // Build sub-buffer by copying channel data slice
+        const tmpCtx = new OfflineAudioContext(1, chunkLen, mono.sampleRate);
+        const subBuf = tmpCtx.createBuffer(1, chunkLen, mono.sampleRate);
+        subBuf.getChannelData(0).set(mono.getChannelData(0).subarray(startSample, startSample + chunkLen));
+
+        const wavBlob = audioBufferToWavBlob(subBuf);
+        const text = await transcribeChunk(wavBlob, i, totalChunks, "audio.wav");
         texts.push(text);
         setFileProgress(Math.round(((i + 1) / totalChunks) * 100));
       }
@@ -594,7 +662,7 @@ export default function TranscriptionApp() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="audio/*,video/*"
+              accept="audio/*,video/*,.m4a,.aac,.flac,.opus,.wma,.caf,.aiff,.au,.ra,.3gp,.amr"
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -608,7 +676,7 @@ export default function TranscriptionApp() {
                 <p className="text-slate-400 text-xs">
                   {(selectedFile.size / (1024 * 1024)).toFixed(1)} Mo
                   {selectedFile.size > CHUNK_SIZE_BYTES &&
-                    ` · ${Math.ceil(selectedFile.size / CHUNK_SIZE_BYTES)} chunks`}
+                    ` · traitement par chunks`}
                   </p>
                 <p className="text-blue-400 text-xs">Cliquer pour changer de fichier</p>
               </div>
