@@ -609,7 +609,7 @@ export default function TranscriptionApp() {
                   {(selectedFile.size / (1024 * 1024)).toFixed(1)} Mo
                   {selectedFile.size > CHUNK_SIZE_BYTES &&
                     ` · ${Math.ceil(selectedFile.size / CHUNK_SIZE_BYTES)} chunks`}
-                  </p>>
+                  </p>
                 <p className="text-blue-400 text-xs">Cliquer pour changer de fichier</p>
               </div>
             ) : (
