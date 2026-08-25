@@ -59,3 +59,19 @@ Next.js 14 · React 18 · Tailwind CSS · TypeScript
   que ces deux fichiers n'auront pas été ajoutés.
 - Le projet est en Next.js 14 et React 18, plus anciens que les autres projets du
   compte. Une montée de version est à prévoir avant d'ajouter des fonctionnalités.
+
+## Déploiement
+
+Le projet est déployé sur **Vercel**, avec une preview construite automatiquement
+à chaque pull request. Comme l'application n'a pas de backend, le déploiement ne
+demande **aucune variable d'environnement** : chaque utilisateur apporte sa propre
+clé Groq depuis l'interface.
+
+⚠️ Rien dans ce dépôt ne décrit cette configuration — ni `vercel.json`, ni dossier
+`.vercel`. Tout est réglé côté Vercel, et n'est donc visible que depuis le tableau
+de bord du compte.
+
+⚠️ **Deux projets Vercel distincts sont branchés sur ce même dépôt** :
+`transcription-audio-app` et `transcription-audio-app-9yel`. Ils construisent le
+même code et publient deux previews à chaque push. C'est presque sûrement un
+doublon accidentel — un des deux est à supprimer côté Vercel.
